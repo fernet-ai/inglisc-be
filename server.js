@@ -1,7 +1,7 @@
 //const cors = require('cors');
 const express = require('express');
 const app = express();
-const PORT = 3000;
+const PORT = 8080;
 
 
 // Middleware per il CORS
@@ -12,6 +12,13 @@ app.use(express.json());
 
 // Memoria per le lobby
 const lobbies = {};
+
+
+
+app.get('/', (req, res) => {
+    res.send('Sei su InGlisc GaMe!')
+  })
+
 
 // Endpoint per creare una lobby
 app.post('/lobby', (req, res) => {
@@ -60,5 +67,5 @@ app.get('/lobby/:code/users', (req, res) => {
 
 // Avvio del server
 app.listen(PORT, () => {
-  console.log(`Server in ascolto su http://localhost:${PORT}`);
+  console.log(`Server in ascolto su porta ${PORT}`);
 });
