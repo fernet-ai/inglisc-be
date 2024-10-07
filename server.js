@@ -20,6 +20,11 @@ app.get('/', (req, res) => {
   })
 
 
+  app.get('/mella', (req, res) => {
+    res.send('Caramella ti adoro ❤️ 🍬')
+  })
+
+
 // Endpoint per creare una lobby
 app.post('/lobby', (req, res) => {
   const { code } = req.body;
