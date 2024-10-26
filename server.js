@@ -29,6 +29,6 @@ app.get('/mella', (req, res) => {
 })
 
 // Avvio del server
-app.listen(() => {
+app.listen(PORT, () => {
   console.log(`Server in ascolto su porta ${PORT} su ambiente di ${ENVIRONMENT}`);
 });
