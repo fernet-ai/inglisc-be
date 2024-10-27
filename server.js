@@ -1,19 +1,19 @@
 const express = require('express');
+require('dotenv').config();
 const jsonParser = require('./middlewares/jsonParser');
+const loggerMiddleware = require('./middlewares/logger');
 const corsMiddleware = require('./middlewares/corsMiddleware');
 const lobbyRoutes = require('./routes/lobbyRoutes');
-require('dotenv').config();
+
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ENVIRONMENT = process.env.ENVIRONMENT;
 
-
-// Middleware per il parsing del JSON
-app.use(jsonParser);
-
-// Middleware per il CORS
-app.use(corsMiddleware);
+// ------ MIDDLEWARES ------
+app.use(corsMiddleware); // Middleware per il CORS
+app.use(jsonParser); // Middleware per il parsing del JSON
+app.use(loggerMiddleware); // Middleware per il logging
 
 
 app.use('/lobby', lobbyRoutes);
