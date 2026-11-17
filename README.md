@@ -1,75 +1,270 @@
 # InGliSc backend
 
-Backend Express per una partita privata di tre giocatori. Richiede Node.js 18 o superiore (testato con Node 22). Nella directory del backend eseguire `npm install`, `npm start` o `npm test`. La porta predefinita è 3000; `PORT` la modifica, `ENVIRONMENT` cambia solo il messaggio di avvio. Il processo mantiene tutto in memoria: il riavvio cancella lobby, sessioni e partite. Eseguire una sola istanza; non esiste persistenza o sincronizzazione fra istanze.
+Backend REST in Node.js ed Express che gestisce le lobby private e lo stato autorevole del gioco InGliSc. È progettato per una rete locale o per un piccolo deployment controllato.
 
-## Protocollo
+## Indice
 
-Le risposte dell'API `/lobby` sono JSON. Inviare `Content-Type: application/json` per ogni body, massimo 16 KB. Le azioni senza parametri accettano body assente oppure `{}`. I campi aggiuntivi sono rifiutati. I codici lobby sono sei caratteri casuali non ambigui e possono essere inseriti in minuscolo. Non esiste un elenco pubblico delle lobby.
+- [Requisiti](#requisiti)
+- [Avvio rapido](#avvio-rapido)
+- [API REST](#api-rest)
+- [Creazione delle lobby](#creazione-delle-lobby)
+- [Ciclo di una manche](#ciclo-di-una-manche)
+- [Snapshot e punteggi](#snapshot-e-punteggi)
+- [Errori](#errori)
+- [Persistenza e sicurezza](#persistenza-e-sicurezza)
+- [Test](#test)
 
-Creazione e ingresso restituiscono `{ "playerId": "...", "token": "...", "snapshot": { ... } }` con HTTP 201. Il token è una credenziale segreta casuale da conservare sul dispositivo e **non** condividere: chi lo possiede controlla quel giocatore. Per ogni altra richiesta inviare `Authorization: Bearer <token>`; il solo `playerId` non autentica. L'uscita invalida il token; la riconnessione usa lo stesso token. Tutte le altre azioni riuscite restituiscono HTTP 200 e `{ "snapshot": { ... } }`, tranne l'uscita che restituisce `{ "left": true }`. `GET` e azioni non restituiscono mai token. Le risposte sono `Cache-Control: no-store`; CORS consente origini web qualsiasi e gli header `Authorization` e `Content-Type`.
+## Requisiti
 
-| Metodo e percorso | Body | Autorizzazione e comportamento |
+- Node.js 22 consigliato
+- npm
+- Porta 3000 disponibile, modificabile tramite `PORT`
+
+## Avvio rapido
+
+```bash
+npm install
+npm start
+```
+
+Il server risponde su `0.0.0.0:3000` per essere raggiungibile dagli altri dispositivi della rete LAN.
+
+Apri nel browser:
+
+```text
+http://localhost:3000
+```
+
+Per una porta personalizzata:
+
+```bash
+PORT=4000 npm start
+```
+
+Variabili disponibili:
+
+- `PORT`: porta HTTP, predefinita 3000
+- `ENVIRONMENT`: etichetta mostrata nel log di avvio
+
+Il backend è stato pensato per una sola istanza: lobby, sessioni e punteggi vivono in memoria e vengono cancellati al riavvio del processo.
+
+## API REST
+
+Le richieste con body devono usare:
+
+```text
+Content-Type: application/json
+```
+
+Le risposte sono JSON e includono `Cache-Control: no-store`. Dopo l'autenticazione, invia il token nell'header:
+
+```text
+Authorization: Bearer <token>
+```
+
+| Metodo | Percorso | Descrizione |
 | --- | --- | --- |
-| POST `/lobby` | `{ "nickname": "Ada" }` | Pubblico; crea lobby e inserisce automaticamente l'host. |
-| POST `/lobby/:code/join` | `{ "nickname": "Bob" }` | Pubblico, solo `waiting`; massimo 3 giocatori. |
-| GET `/lobby/:code` | nessuno | Token giocatore; snapshot personale, utile per polling. |
-| POST `/lobby/:code/leave` | assente o `{}` | Token giocatore; abbandona, eventualmente interrompendo la partita. |
-| POST `/lobby/:code/start` | assente o `{}` | Solo host in `waiting` con esattamente 3 giocatori. |
-| POST `/lobby/:code/setup` | `{ "prompt": "gatto", "options": ["cat", "dog", "bird", "fish", "horse"], "correctIndex": 0 }` | Solo paroliere in `setup`. `correctIndex` è l'indice intero **zero-based nell'array inviato**, non nell'array mescolato. |
-| POST `/lobby/:code/initial-choice` | `{ "optionId": "..." }` | Solo un giocatore non paroliere in `initial-choices`, una volta. |
-| POST `/lobby/:code/discard` | `{ "optionId": "..." }` | Solo paroliere in `discard`; opzione non corretta, scelta o meno. |
-| POST `/lobby/:code/confirm` | `{ "optionId": "..." }` | Solo un giocatore non paroliere in `final-choices`, una volta; non può selezionare l'opzione scartata. |
-| POST `/lobby/:code/advance` | assente o `{}` | Solo host in `round-result`; inizia la manche successiva oppure mostra la classifica dopo la terza. |
-| POST `/lobby/:code/rematch` | assente o `{}` | Solo host in `game-result`; azzera i punteggi e inizia una nuova partita. |
+| `POST` | `/lobby` | Crea una lobby |
+| `POST` | `/lobby/:code/join` | Entra in una lobby |
+| `GET` | `/lobby/:code` | Legge lo snapshot personale |
+| `POST` | `/lobby/:code/start` | Avvia la partita |
+| `POST` | `/lobby/:code/leave` | Esce dalla lobby |
+| `POST` | `/lobby/:code/setup` | Il paroliere prepara la manche |
+| `POST` | `/lobby/:code/initial-choice` | Invia la scelta iniziale |
+| `POST` | `/lobby/:code/discard` | Il paroliere scarta una parola |
+| `POST` | `/lobby/:code/confirm` | Conferma la scelta finale |
+| `POST` | `/lobby/:code/advance` | Avanza alla manche successiva |
+| `POST` | `/lobby/:code/rematch` | Avvia una nuova partita |
 
-I nickname sono stringhe di 1–30 unità UTF-16, l'indizio 1–120 e ogni opzione 1–80, dopo normalizzazione Unicode NFKC e rimozione degli spazi iniziali/finali; caratteri di controllo e formattazione Unicode non sono ammessi. I nickname devono essere unici nella lobby e le cinque opzioni devono essere distinte, confrontando i valori normalizzati senza distinzione tra maiuscole e minuscole. Il server non verifica che l'indizio sia italiano, che le opzioni siano inglesi o che la traduzione/sinonimia sia corretta: è responsabilità del paroliere. Le opzioni sono mescolate in modo casuale e hanno ID opachi generati dal server.
+## Creazione delle lobby
 
-## Snapshot completo
+Crea una lobby da 6 manche:
 
-Ogni snapshot ha esattamente questi campi (gli array possono essere vuoti e i campi indicati null possono essere null):
+```bash
+curl -X POST http://localhost:3000/lobby \
+  -H 'Content-Type: application/json' \
+  -d '{"nickname":"Ada","roundCount":6}'
+```
+
+Valori ammessi per `roundCount`:
+
+- `3`
+- `6`
+- `9`
+- `12`
+
+Se omesso, il valore predefinito è `3`. Qualsiasi altro valore viene rifiutato.
+
+La risposta contiene:
 
 ```json
 {
-	"code": "ABC234", "rev": 4, "phase": "initial-choices", "hostId": "player-id", "me": "player-id",
-	"players": [{ "id": "player-id", "nickname": "Ada", "score": 0 }],
-	"lastEvent": null,
-	"round": {
-		"id": "round-id", "number": 1, "wordmasterId": "player-id", "prompt": "gatto",
-		"options": [{ "id": "option-id", "text": "cat" }],
-		"discardedOptionId": null,
-		"initialSubmittedPlayerIds": [], "initialChoices": [],
-		"finalConfirmedPlayerIds": [], "myFinalOptionId": null, "result": null
-	},
-	"results": [], "ranking": null
+  "playerId": "...",
+  "token": "...",
+  "snapshot": {}
 }
 ```
 
-L'esempio abbrevia gli array `players` e `options`: durante una manche configurata sono rispettivamente tre e cinque. Ogni manche ha un `id` casuale distinto, stabile per tutta la sua durata anche quando la numerazione riparte in una rivincita. `rev` parte da 1 e aumenta una volta per ogni mutazione riuscita; letture, errori e aggiornamento della scadenza non cambiano la revisione. `me` è l'ID del giocatore autenticato, non il token. L'ordine di `players` è quello d'ingresso. `round` è null in `waiting`; in `setup`, `prompt` è null e `options` è vuoto. `lastEvent` è null o `{ "type": "game_aborted", "playerId": "...", "nickname": "..." }` dopo un'uscita durante la partita; viene cancellato al prossimo avvio. `results` contiene i risultati delle manche concluse nella partita corrente.
+Lo snapshot include `roundCount` e `totalRounds`, entrambi impostati sul numero scelto dal creatore.
 
-`initialSubmittedPlayerIds` e `finalConfirmedPlayerIds` indicano solo chi ha agito. `initialChoices` contiene oggetti `{ "playerId": "...", "optionId": "..." }`: fino a entrambe le scelte ogni giocatore vede solo la propria, poi tutti vedono entrambe. `myFinalOptionId` è la propria conferma o null, mai la scelta finale altrui prima del risultato. La soluzione non compare in alcuno snapshot fino alla risoluzione. `discardedOptionId` è null finché il paroliere non scarta. Dopo entrambe le conferme `round.result`, presente anche in `results`, è:
+I nickname devono essere unici nella lobby e non possono superare 30 caratteri. Un lobby può ospitare esattamente 3 giocatori.
+
+### Esempio di ingresso
+
+```bash
+curl -X POST http://localhost:3000/lobby/ABC234/join \
+  -H 'Content-Type: application/json' \
+  -d '{"nickname":"Bob"}'
+```
+
+Il codice viene normalizzato in maiuscolo. Il creator può avviare la partita solo quando sono presenti tre giocatori.
+
+## Ciclo di una manche
+
+Le fasi sono:
+
+```text
+waiting
+  -> setup
+  -> initial-choices
+  -> discard
+  -> final-choices
+  -> round-result
+  -> setup / game-result
+```
+
+1. Il paroliere prepara un indizio italiano, cinque opzioni inglesi e indica la risposta corretta.
+2. Gli altri due giocatori scelgono una risposta in segreto.
+3. Dopo entrambe le scelte, il paroliere scarta una delle quattro opzioni sbagliate.
+4. Gli altri due confermano la risposta finale. Possono mantenerla o cambiarla una volta; se avevano scelto l'opzione scartata devono cambiarla.
+5. Il server calcola i punti e rende visibile il risultato.
+6. L'host avanza alla manche successiva oppure apre la classifica finale.
+
+Il ruolo del paroliere ruota nell'ordine di ingresso. Per una partita da 6, 9 o 12 manche il ciclo riparte con lo stesso ordine dopo ogni terna di giocatori.
+
+### Preparazione
 
 ```json
 {
-	"number": 1, "wordmasterId": "...", "prompt": "gatto",
-	"options": [{ "id": "...", "text": "cat" }],
-	"correctOptionId": "...", "discardedOptionId": "...",
-	"guesses": [{ "playerId": "...", "initialOptionId": "...", "finalOptionId": "...", "changed": false, "correct": true, "points": 3 }],
-	"wordmasterPoints": 0
+  "prompt": "gatto",
+  "options": ["cat", "dog", "bird", "fish", "horse"],
+  "correctIndex": 0
 }
 ```
 
-Anche qui le opzioni reali sono cinque e `guesses` contiene entrambi i giocatori. In `game-result`, `ranking` è un array ordinato per punteggio decrescente di `{ "playerId": "...", "score": 6, "rank": 1 }`; i pari merito hanno lo stesso rango di competizione (ad esempio 1, 1, 3). Altrimenti `ranking` è null.
+`correctIndex` è basato sull'indice dell'array inviato dal paroliere, prima dello shuffle casuale delle opzioni.
 
-## Regole e ciclo
+## Snapshot e punteggi
 
-Le fasi sono `waiting` → `setup` → `initial-choices` → `discard` → `final-choices` → `round-result`. Dopo l'avanzamento si riparte da `setup` oppure, dopo tre manche valide, si passa a `game-result`. Il paroliere ruota nell'ordine d'ingresso, iniziando dall'host al momento dell'avvio; entrambi i giocatori possono scegliere la stessa opzione iniziale. Scartata un'opzione sbagliata, ognuno conferma irrevocabilmente una risposta ancora disponibile: può mantenerla o cambiare una sola volta; se scartata deve cambiarla.
+La lettura dello stato è personalizzata per il giocatore autenticato:
 
-Il giocatore guadagna 3 punti se la risposta finale è corretta e invariata, 1 se corretta e cambiata, altrimenti 0. Il paroliere guadagna 3 se nessuno indovina, 1 se solo uno indovina cambiando, altrimenti 0. Il server calcola tutti i punti. Non esiste contestazione, penalità manuale o annullamento della singola manche: questa scelta modifica la costituzione originale (-1 e annullamento della manche).
+```bash
+curl http://localhost:3000/lobby/ABC234 \
+  -H 'Authorization: Bearer <token>'
+```
 
-Se un giocatore esce in `waiting`, l'host passa al primo rimasto quando necessario. Se esce in qualunque altra fase, la partita viene interrotta per tutti, tutti i punteggi e risultati sono cancellati, si torna a `waiting` e l'host passa al primo rimasto se necessario. L'ultimo giocatore che esce elimina la lobby. Una disconnessione temporanea non rimuove nessuno: attività di qualsiasi giocatore autenticato o ingresso riuscito rinnova l'inattività dell'intera lobby. Dopo 24 ore senza attività la lobby e tutti i token scadono; controllo su accesso e pulizia periodica ogni minuto. Nessuna espulsione individuale per inattività.
+Lo snapshot include:
 
-## Errori e sicurezza
+- `code`: codice della lobby
+- `roundCount` e `totalRounds`: numero totale scelto
+- `phase`: fase corrente
+- `hostId`: creatore o nuovo host
+- `me`: ID del giocatore autenticato
+- `players`: nickname e punteggi
+- `round`: manche corrente e scelte
+- `results`: risultati conclusi
+- `ranking`: classifica finale
+- `rev`: revisione monotona dello stato
 
-Gli errori sono `{ "error": { "code": "...", "message": "..." } }` senza dati segreti. HTTP 400: `INVALID_INPUT`, `INVALID_JSON`, `INVALID_OPTION`, `INVALID_DISCARD` o `BAD_REQUEST` per altri errori di richiesta; 401 `UNAUTHORIZED`; 403 `FORBIDDEN`; 404 `ROOM_NOT_FOUND` (inesistente/scaduta) o `NOT_FOUND` (percorso); 409 `INVALID_PHASE`, `ALREADY_SUBMITTED`, `NICKNAME_TAKEN`, `ROOM_FULL`, `NEED_THREE_PLAYERS`; 413 `BODY_TOO_LARGE`; 415 `UNSUPPORTED_MEDIA_TYPE`; 500 `INTERNAL_ERROR`. Le richieste duplicate possono ricevere `ALREADY_SUBMITTED` oppure `INVALID_PHASE` se nel frattempo la fase è avanzata: dopo errori o timeout rileggere lo snapshot, senza ripetere ciecamente un'azione. Non ci sono precondizioni di revisione o chiavi di idempotenza.
+La soluzione corretta non viene inclusa negli snapshot visibili agli altri giocatori prima del risultato.
 
-Il backend non registra token, body o risposte. È un prototipo, non pronto per esposizione pubblica: usare HTTPS, proteggere i token anche in client e proxy, limitare origini e traffico, aggiungere rate limiting, difese antiabuso e hosting adatto. I codici lobby non sono credenziali forti; chi conosce un codice può entrare se c'è posto. Nessun account, database, matchmaking o chat. Il frontend usa questo contratto.
+### Punteggi
+
+Ogni giocatore guadagna:
+
+- **+3**: risposta corretta senza cambio
+- **+1**: risposta corretta dopo il cambio
+- **0**: risposta sbagliata
+
+Il paroliere guadagna:
+
+- **+3**: nessuno indovina
+- **+1**: solo uno indovina cambiando idea
+- **0**: negli altri casi
+
+In caso di pareggio, i giocatori condividono la stessa posizione nella classifica.
+
+## Uscita e lobby
+
+- Se un giocatore esce mentre è in lobby, viene rimosso dalla lobby.
+- Se l'host esce dalla lobby, il ruolo passa al primo giocatore restante.
+- Se qualcuno esce durante una partita, la partita viene interrotta, i punteggi azzerati e la lobby torna in attesa.
+- Quando tutti escono, la lobby viene eliminata.
+- Una disconnessione temporanea lascia il posto riservato fino alla scadenza.
+
+Le lobby inattive vengono cancellate dopo 24 ore dalla loro ultima attività. Il controllo viene eseguito periodicamente ogni minuto.
+
+## Errori
+
+Le risposte di errore hanno questo formato:
+
+```json
+{
+  "error": {
+    "code": "ROOM_NOT_FOUND",
+    "message": "Room not found or expired."
+  }
+}
+```
+
+Codici principali:
+
+| Stato | Codici |
+| --- | --- |
+| 400 | `INVALID_INPUT`, `INVALID_JSON`, `INVALID_OPTION`, `INVALID_DISCARD` |
+| 401 | `UNAUTHORIZED` |
+| 403 | `FORBIDDEN` |
+| 404 | `ROOM_NOT_FOUND`, `NOT_FOUND` |
+| 409 | `INVALID_PHASE`, `ALREADY_SUBMITTED`, `NICKNAME_TAKEN`, `ROOM_FULL`, `NEED_THREE_PLAYERS` |
+| 413 | `BODY_TOO_LARGE` |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` |
+| 500 | `INTERNAL_ERROR` |
+
+Se una richiesta può essere stata elaborata ma la risposta è stata persa, rileggi lo snapshot invece di ripetere ciecamente l'azione.
+
+## Persistenza e sicurezza
+
+Questo backend è un prototipo per rete locale o demo controllate:
+
+- nessun database
+- nessun account utente
+- nessuna chat o matchmaking pubblico
+- token bearer gestiti in memoria
+- nessuna protezione di produzione avanzata
+- nessuna garanzia multiistanza
+
+Per un deployment pubblico servono TLS/HTTPS, database o Redis, rate limiting, protezione contro abuso, logging gestito e una gestione sicura dei token.
+
+Il middleware CORS permette richieste web, ma non rende il sistema sicuro per Internet.
+
+## Test
+
+Avvia tutte le test suite:
+
+```bash
+npm test
+```
+
+La suite usa istanze Express effimere su porte casuali e verifica:
+
+- lobby e nickname
+- autenticazione tramite token
+- valori ammessi di `roundCount`
+- tutti i ruoli e le fasi
+- scelte, scarto e conferme
+- punteggi
+- rotazione delle manche
+- rivincita
+- abbandoni e scadenze
+
+Per la verifica completa, avvia anche il frontend nella repository `inglisc`.

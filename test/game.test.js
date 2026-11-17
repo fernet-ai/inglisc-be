@@ -69,6 +69,22 @@ test('identity, lobby validation, safe names, host rotation and leaving', async 
   error(await req(`/lobby/${code}`, { method: 'GET', token: c.token }), 404, 'ROOM_NOT_FOUND');
 });
 
+test('creator can choose 3, 6, 9 or 12 rounds', async (t) => {
+  const req = await fixture(t);
+  error(await req('/lobby', { body: { nickname: 'Ada', roundCount: 5 } }), 400, 'INVALID_INPUT');
+  const created = await req('/lobby', { body: { nickname: 'Ada', roundCount: 6 } });
+  assert.equal(created.status, 201);
+  assert.equal(created.json.snapshot.roundCount, 6);
+  assert.equal(created.json.snapshot.totalRounds, 6);
+  const code = created.json.snapshot.code;
+  await req(`/lobby/${code}/join`, { body: { nickname: 'Bob' } });
+  await req(`/lobby/${code}/join`, { body: { nickname: 'Cat' } });
+  const started = await req(`/lobby/${code}/start`, { token: created.json.token });
+  assert.equal(started.json.snapshot.roundCount, 6);
+  assert.equal(started.json.snapshot.totalRounds, 6);
+  assert.equal(started.json.snapshot.round.number, 1);
+});
+
 test('phase, role, privacy, immutable choices, forced change, and concurrent duplicate requests', async (t) => {
   const req = await fixture(t);
   const { call, get, ps } = await players(req);

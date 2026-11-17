@@ -54,13 +54,17 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
   }
   function makePlayer(nickname) { return { id: id(), token: token(), nickname, score: 0 }; }
   function create(body) {
-    bodyFields(body, ['nickname']);
+    bodyFields(body, ['nickname', 'roundCount']);
     const nickname = text(body.nickname, 'nickname', 30);
+    const roundCount = body.roundCount === undefined ? 3 : body.roundCount;
+    if (!Number.isInteger(roundCount) || ![3, 6, 9, 12].includes(roundCount)) {
+      fail(400, 'INVALID_INPUT', 'roundCount must be 3, 6, 9 or 12.');
+    }
     sweep();
     let code;
     do { code = Array.from({ length: 6 }, () => alphabet[crypto.randomInt(alphabet.length)]).join(''); } while (rooms.has(code));
     const player = makePlayer(nickname);
-    const room = { code, players: [player], hostId: player.id, phase: 'waiting', rev: 1, lastActive: now(), game: null, lastEvent: null };
+    const room = { code, players: [player], hostId: player.id, roundCount, phase: 'waiting', rev: 1, lastActive: now(), game: null, lastEvent: null };
     rooms.set(code, room);
     return { room, player };
   }
@@ -107,7 +111,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     if ((room.game.round.wordmasterId === player.id) !== required) fail(403, 'FORBIDDEN', required ? 'Only the wordmaster can perform this action.' : 'The wordmaster cannot perform this action.');
   }
   function newRound(room, number) {
-    room.game.round = { id: id(), number, wordmasterId: room.game.order[number - 1], prompt: null, options: [], correctId: null, initial: new Map(), discardedId: null, final: new Map(), result: null };
+    room.game.round = { id: id(), number, wordmasterId: room.game.order[(number - 1) % room.game.order.length], prompt: null, options: [], correctId: null, initial: new Map(), discardedId: null, final: new Map(), result: null };
     room.phase = 'setup';
   }
   function start(room, player, rematch = false) {
@@ -178,7 +182,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
   }
   function advance(room, player) {
     phase(room, 'round-result'); host(room, player);
-    if (room.game.round.number === 3) room.phase = 'game-result';
+    if (room.game.round.number === room.roundCount) room.phase = 'game-result';
     else newRound(room, room.game.round.number + 1);
     changed(room);
   }
@@ -203,7 +207,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
         ranking = sorted.map((p, index) => ({ playerId: p.id, score: p.score, rank: sorted.findIndex((q) => q.score === p.score) + 1 }));
       }
     }
-    return { code: room.code, rev: room.rev, phase: room.phase, hostId: room.hostId, me: player.id,
+    return { code: room.code, rev: room.rev, phase: room.phase, hostId: room.hostId, roundCount: room.roundCount, totalRounds: room.roundCount, me: player.id,
       players: room.players.map(({ id, nickname, score }) => ({ id, nickname, score })),
       lastEvent: room.lastEvent, round, results: game ? game.results : [], ranking };
   }
