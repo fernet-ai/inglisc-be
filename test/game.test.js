@@ -37,6 +37,14 @@ async function setupRound(call, master) {
 const choice = (optionId) => ({ optionId });
 const error = (response, status, code) => { assert.equal(response.status, status); assert.equal(response.json.error.code, code); };
 
+test('health endpoint responds without credentials', async (t) => {
+  const req = await fixture(t);
+  const response = await req('/health', { method: 'GET' });
+  assert.equal(response.status, 200);
+  assert.equal(response.json.status, 'ok');
+  assert.equal(typeof response.json.uptimeSeconds, 'number');
+});
+
 test('identity, lobby validation, safe names, host rotation and leaving', async (t) => {
   const req = await fixture(t);
   error(await req('/lobby', { body: { nickname: '' } }), 400, 'INVALID_INPUT');
