@@ -37,6 +37,15 @@ async function setupRound(call, master) {
 const choice = (optionId) => ({ optionId });
 const error = (response, status, code) => { assert.equal(response.status, status); assert.equal(response.json.error.code, code); };
 
+test('active user endpoint reports players with recent activity', async (t) => {
+  const req = await fixture(t);
+  const host = await req('/lobby', { body: { nickname: 'Ada', roundCount: 3 } });
+  await req(`/lobby/${host.json.snapshot.code}/join`, { body: { nickname: 'Bob' } });
+  const active = await req('/active', { method: 'GET' });
+  assert.equal(active.status, 200);
+  assert.equal(active.json.activeUsers, 2);
+});
+
 test('health endpoint responds without credentials', async (t) => {
   const req = await fixture(t);
   const response = await req('/health', { method: 'GET' });

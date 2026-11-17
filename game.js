@@ -52,7 +52,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     if (!room) fail(404, 'ROOM_NOT_FOUND', 'Room not found or expired.');
     return room;
   }
-  function makePlayer(nickname) { return { id: id(), token: token(), nickname, score: 0 }; }
+  function makePlayer(nickname) { return { id: id(), token: token(), nickname, score: 0, lastSeen: now() }; }
   function create(body) {
     bodyFields(body, ['nickname', 'roundCount']);
     const nickname = text(body.nickname, 'nickname', 30);
@@ -85,6 +85,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     const player = candidate && room.players.find((p) => crypto.timingSafeEqual(Buffer.from(p.token, 'utf8'), candidate));
     if (!player) fail(401, 'UNAUTHORIZED', 'A valid player bearer token is required.');
     room.lastActive = now();
+    player.lastSeen = room.lastActive;
     return player;
   }
   function changed(room) { room.rev++; room.lastActive = now(); }
@@ -211,7 +212,16 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
       players: room.players.map(({ id, nickname, score }) => ({ id, nickname, score })),
       lastEvent: room.lastEvent, round, results: game ? game.results : [], ranking };
   }
-  return { create, join, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep };
+  function activeCount() {
+    const time = now();
+    sweep();
+    let count = 0;
+    for (const room of rooms.values()) {
+      count += room.players.filter(player => time - player.lastSeen <= 2 * 60 * 1000).length;
+    }
+    return count;
+  }
+  return { create, join, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep, activeCount };
 }
 
 module.exports = { createStore, ApiError, bodyFields };

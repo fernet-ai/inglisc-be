@@ -21,6 +21,7 @@ function createApp(options = {}) {
   app.get('/', (req, res) => res.send('Sei su InGlisc GaMe!'));
   app.get('/mella', (req, res) => res.send('Caramella ti adoro ❤️ 🍬'));
   app.get('/health', (req, res) => res.json({ status: 'ok', uptimeSeconds: Math.floor(process.uptime()), environment: process.env.ENVIRONMENT || 'development' }));
+  app.get('/active', (req, res) => res.json({ activeUsers: store.activeCount() }));
   app.use((req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found.' } }));
   app.use((err, req, res, next) => {
     if (err instanceof ApiError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });
