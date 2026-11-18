@@ -46,12 +46,44 @@ test('active user endpoint reports players with recent activity', async (t) => {
   assert.equal(active.json.activeUsers, 2);
 });
 
+test('active lobby list includes creator, participants, phase and joinability', async (t) => {
+  const req = await fixture(t);
+  const host = await req('/lobby', { body: { nickname: 'Ada' } });
+  const code = host.json.snapshot.code;
+  assert.deepEqual((await req('/lobbies', { method: 'GET' })).json.lobbies, [
+    { code, creatorNickname: 'Ada', roundCount: 3, participantNames: ['Ada'], participantCount: 1, maxParticipants: 3, phase: 'waiting', isInProgress: false, joinable: true },
+  ]);
+  await req(`/lobby/${code}/join`, { body: { nickname: 'Bob' } });
+  assert.deepEqual((await req('/lobbies', { method: 'GET' })).json.lobbies, [
+    { code, creatorNickname: 'Ada', roundCount: 3, participantNames: ['Ada', 'Bob'], participantCount: 2, maxParticipants: 3, phase: 'waiting', isInProgress: false, joinable: true },
+  ]);
+  await req(`/lobby/${code}/join`, { body: { nickname: 'Cat' } });
+  let lobby = (await req('/lobbies', { method: 'GET' })).json.lobbies[0];
+  assert.equal(lobby.participantCount, 3);
+  assert.equal(lobby.joinable, false);
+  assert.equal(lobby.isInProgress, false);
+  await req(`/lobby/${code}/start`, { token: host.json.token });
+  lobby = (await req('/lobbies', { method: 'GET' })).json.lobbies[0];
+  assert.deepEqual(lobby.participantNames, ['Ada', 'Bob', 'Cat']);
+  assert.equal(lobby.phase, 'setup');
+  assert.equal(lobby.isInProgress, true);
+  assert.equal(lobby.joinable, false);
+});
+
 test('health endpoint responds without credentials', async (t) => {
   const req = await fixture(t);
   const response = await req('/health', { method: 'GET' });
   assert.equal(response.status, 200);
   assert.equal(response.json.status, 'ok');
   assert.equal(typeof response.json.uptimeSeconds, 'number');
+});
+
+test('coffee offer counter is shared by clients on the server', async (t) => {
+  const req = await fixture(t);
+  assert.deepEqual((await req('/coffee', { method: 'GET' })).json, { coffeeCount: 0 });
+  assert.deepEqual((await req('/coffee', { method: 'POST' })).json, { coffeeCount: 1 });
+  assert.deepEqual((await req('/coffee', { method: 'POST' })).json, { coffeeCount: 2 });
+  assert.deepEqual((await req('/coffee', { method: 'GET' })).json, { coffeeCount: 2 });
 });
 
 test('identity, lobby validation, safe names, host rotation and leaving', async (t) => {

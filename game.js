@@ -42,6 +42,7 @@ function shuffle(items) {
 function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error('Invalid lobby TTL');
   const rooms = new Map();
+  let coffeeCount = 0;
   function sweep() {
     const time = now();
     for (const [code, room] of rooms) if (time - room.lastActive >= ttlMs) rooms.delete(code);
@@ -64,7 +65,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     let code;
     do { code = Array.from({ length: 6 }, () => alphabet[crypto.randomInt(alphabet.length)]).join(''); } while (rooms.has(code));
     const player = makePlayer(nickname);
-    const room = { code, players: [player], hostId: player.id, roundCount, phase: 'waiting', rev: 1, lastActive: now(), game: null, lastEvent: null };
+    const room = { code, creatorNickname: nickname, players: [player], hostId: player.id, roundCount, phase: 'waiting', rev: 1, lastActive: now(), game: null, lastEvent: null };
     rooms.set(code, room);
     return { room, player };
   }
@@ -221,7 +222,28 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     }
     return count;
   }
-  return { create, join, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep, activeCount };
+  function openLobbies() {
+    sweep();
+    const time = now();
+    return [...rooms.values()]
+      .filter(room => room.phase !== 'game-result' && time - room.lastActive <= 2 * 60 * 1000)
+      .map(room => ({
+        code: room.code,
+        creatorNickname: room.creatorNickname,
+        roundCount: room.roundCount,
+        participantNames: room.players.map(player => player.nickname),
+        participantCount: room.players.length,
+        maxParticipants: 3,
+        phase: room.phase,
+        isInProgress: room.phase !== 'waiting',
+        joinable: room.phase === 'waiting' && room.players.length < 3,
+      }));
+  }
+  function offerCoffee() {
+    coffeeCount += 1;
+    return coffeeCount;
+  }
+  return { create, join, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep, activeCount, openLobbies, coffeeCount: () => coffeeCount, offerCoffee };
 }
 
 module.exports = { createStore, ApiError, bodyFields };
