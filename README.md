@@ -188,9 +188,12 @@ Ogni giocatore guadagna:
 
 Il paroliere guadagna:
 
-- **+3**: nessuno indovina
+- **+3**: nessuno indovina e la coppia parola italiana–traduzione corretta è presente nel dizionario
+- **+2**: nessuno indovina e la coppia non è verificata nel dizionario
 - **+1**: solo uno indovina cambiando idea
 - **0**: negli altri casi
+
+La verifica usa il dizionario italiano Wiktionary distribuito tramite Kaikki.org/Wiktextract (CC BY-SA 4.0). Se nessuno indovina una coppia non verificata, il paroliere riceve al massimo 2 punti.
 
 In caso di pareggio, i giocatori condividono la stessa posizione nella classifica.
 

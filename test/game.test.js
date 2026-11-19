@@ -29,8 +29,8 @@ async function players(request) {
   return { code, ps, call, get };
 }
 const setupBody = { prompt: 'gatto', options: ['cat', 'dog', 'bird', 'fish', 'horse'], correctIndex: 0 };
-async function setupRound(call, master) {
-  const response = await call('setup', master, setupBody);
+async function setupRound(call, master, body = setupBody) {
+  const response = await call('setup', master, body);
   assert.equal(response.status, 200);
   return Object.fromEntries(response.json.snapshot.round.options.map((o) => [o.text, o.id]));
 }
@@ -196,6 +196,25 @@ for (const left of ['wrong', 'unchanged', 'changed']) for (const right of ['wron
     assert.deepEqual(snapshot.players.map((p) => p.score), [masterPoints, points(left), points(right)]);
     assert.equal(snapshot.round.result.wordmasterPoints, masterPoints);
     assert.deepEqual(snapshot.round.result.guesses.map((g) => g.playerId), [ps[1].playerId, ps[2].playerId]);
+  });
+}
+
+for (const testCase of [
+  { label: 'prompt absent from dictionary', body: { prompt: 'parolainventatainesistente', options: ['cat', 'dog', 'bird', 'fish', 'horse'], correctIndex: 0 } },
+  { label: 'correct translation absent for dictionary prompt', body: { prompt: 'gatto', options: ['kitten', 'dog', 'bird', 'fish', 'horse'], correctIndex: 0 } },
+]) {
+  test(`wordmaster earns only 2 points when nobody guesses and ${testCase.label}`, async (t) => {
+    const req = await fixture(t);
+    const { call } = await players(req);
+    await call('start', 0);
+    const ids = await setupRound(call, 0, testCase.body);
+    await call('initial-choice', 1, choice(ids.dog));
+    await call('initial-choice', 2, choice(ids.fish));
+    await call('discard', 0, choice(ids.bird));
+    await call('confirm', 1, choice(ids.fish));
+    const { snapshot } = (await call('confirm', 2, choice(ids.dog))).json;
+    assert.equal(snapshot.round.result.wordmasterPoints, 2);
+    assert.equal(snapshot.players[0].score, 2);
   });
 }
 

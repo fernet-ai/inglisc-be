@@ -13,6 +13,9 @@ const id = () => crypto.randomBytes(16).toString('hex');
 const token = () => crypto.randomBytes(32).toString('base64url');
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const key = (s) => s.normalize('NFKC').toLowerCase();
+const WORD_PAIRS = require('./word-pairs.json').pairs;
+const dictionaryPairs = new Set(WORD_PAIRS.map(([prompt, translation]) => `${key(prompt)}\u0000${key(translation)}`));
+const isDictionaryPair = (prompt, translation) => dictionaryPairs.has(`${key(prompt)}\u0000${key(translation)}`);
 
 function text(value, name, max) {
   if (typeof value !== 'string') fail(400, 'INVALID_INPUT', `${name} must be a string.`);
@@ -173,7 +176,9 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
         return { playerId: p.id, initialOptionId, finalOptionId, changed, correct, points: correct ? (changed ? 1 : 3) : 0 };
       });
       const winners = guesses.filter((g) => g.correct);
-      const wordmasterPoints = winners.length === 0 ? 3 : winners.length === 1 && winners[0].changed ? 1 : 0;
+      const correctTranslation = round.options.find((item) => item.id === round.correctId).text;
+      const dictionaryVerified = isDictionaryPair(round.prompt, correctTranslation);
+      const wordmasterPoints = winners.length === 0 ? (dictionaryVerified ? 3 : 2) : winners.length === 1 && winners[0].changed ? 1 : 0;
       for (const guess of guesses) room.players.find((p) => p.id === guess.playerId).score += guess.points;
       room.players.find((p) => p.id === round.wordmasterId).score += wordmasterPoints;
       round.result = { number: round.number, wordmasterId: round.wordmasterId, prompt: round.prompt, options: round.options, correctOptionId: round.correctId, discardedOptionId: round.discardedId, guesses, wordmasterPoints };
