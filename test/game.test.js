@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApp } = require('../server');
+const dictionary = require('../word-pairs.json');
 
 async function fixture(t, options) {
   const app = createApp(options);
@@ -132,6 +133,78 @@ test('creator can choose 3, 6, 9 or 12 rounds', async (t) => {
   assert.equal(started.json.snapshot.roundCount, 6);
   assert.equal(started.json.snapshot.totalRounds, 6);
   assert.equal(started.json.snapshot.round.number, 1);
+});
+
+test('host can add and remove bots to fill the lobby, but other players cannot manage them', async (t) => {
+  const req = await fixture(t);
+  const host = (await req('/lobby', { body: { nickname: 'Ada' } })).json;
+  const code = host.snapshot.code;
+  const bob = (await req(`/lobby/${code}/join`, { body: { nickname: 'Bob' } })).json;
+  const call = (player, action, body = {}) => req(`/lobby/${code}/${action}`, { token: player.token, body });
+
+  error(await call(bob, 'add-bot'), 403, 'FORBIDDEN');
+  let response = await call(host, 'add-bot');
+  assert.equal(response.status, 200);
+  let bots = response.json.snapshot.players.filter((player) => player.isBot);
+  assert.equal(bots.length, 1);
+  assert.equal(bots[0].botDifficulty, 'medio');
+  assert.equal(bots[0].token, undefined);
+  assert.equal((await req('/active', { method: 'GET' })).json.activeUsers, 2);
+  assert.deepEqual((await req('/lobbies', { method: 'GET' })).json.lobbies[0].participantNames, ['Ada', 'Bob', `${bots[0].nickname} (bot)`]);
+  error(await call(host, 'add-bot'), 409, 'ROOM_FULL');
+  error(await call(bob, 'set-bot-difficulty', { playerId: bots[0].id, difficulty: 'difficile' }), 403, 'FORBIDDEN');
+  error(await call(host, 'set-bot-difficulty', { playerId: bots[0].id, difficulty: 'impossibile' }), 400, 'INVALID_INPUT');
+  response = await call(host, 'set-bot-difficulty', { playerId: bots[0].id, difficulty: 'difficile' });
+  bots = response.json.snapshot.players.filter((player) => player.isBot);
+  assert.equal(bots[0].botDifficulty, 'difficile');
+  response = await call(host, 'remove-bot', { playerId: bots[0].id });
+  assert.equal(response.json.snapshot.players.length, 2);
+  response = await call(host, 'add-bot');
+  assert.equal(response.json.snapshot.players.length, 3);
+  assert.equal((await call(host, 'start')).json.snapshot.phase, 'setup');
+});
+
+test('bots play as guessers and later take the wordmaster role automatically', async (t) => {
+  const req = await fixture(t);
+  const host = (await req('/lobby', { body: { nickname: 'Ada', roundCount: 3 } })).json;
+  const code = host.snapshot.code;
+  const call = (action, body = {}) => req(`/lobby/${code}/${action}`, { token: host.token, body });
+  const firstBot = (await call('add-bot')).json.snapshot.players.find((player) => player.isBot);
+  const secondSnapshot = (await call('add-bot')).json.snapshot;
+  const secondBot = secondSnapshot.players.find((player) => player.isBot && player.id !== firstBot.id);
+  await call('set-bot-difficulty', { playerId: firstBot.id, difficulty: 'difficile' });
+  await call('start');
+
+  let round = (await req(`/lobby/${code}`, { method: 'GET', token: host.token })).json.snapshot.round;
+  assert.equal(round.wordmasterId, host.playerId);
+  await call('setup', setupBody);
+  round = (await req(`/lobby/${code}`, { method: 'GET', token: host.token })).json.snapshot.round;
+  assert.equal(round.initialSubmittedPlayerIds.length, 2);
+  const wrongOption = round.options.find((option) => option.id !== round.options.find((item) => item.text === 'cat').id);
+  await call('discard', { optionId: wrongOption.id });
+  let snapshot = (await req(`/lobby/${code}`, { method: 'GET', token: host.token })).json.snapshot;
+  assert.equal(snapshot.phase, 'round-result');
+  assert.equal(snapshot.round.result.guesses.length, 2);
+  assert.ok(snapshot.round.result.guesses.every((guess) => guess.playerId !== host.playerId));
+
+  await call('advance');
+  snapshot = (await req(`/lobby/${code}`, { method: 'GET', token: host.token })).json.snapshot;
+  round = snapshot.round;
+  assert.equal(snapshot.phase, 'initial-choices');
+  assert.equal(round.wordmasterId, firstBot.id);
+  assert.ok(round.prompt);
+  assert.ok(dictionary.pairs.some(([prompt, , difficulty]) => prompt === round.prompt && difficulty === 'difficile'));
+  assert.equal(round.initialSubmittedPlayerIds.length, 1);
+  await call('initial-choice', { optionId: round.options[0].id });
+  snapshot = (await req(`/lobby/${code}`, { method: 'GET', token: host.token })).json.snapshot;
+  assert.equal(snapshot.phase, 'final-choices');
+  assert.equal(snapshot.round.finalConfirmedPlayerIds.length, 1);
+  assert.ok(snapshot.round.discardedOptionId);
+  const finalChoice = snapshot.round.options.find((option) => option.id !== snapshot.round.discardedOptionId);
+  snapshot = (await call('confirm', { optionId: finalChoice.id })).json.snapshot;
+  assert.equal(snapshot.phase, 'round-result');
+  assert.equal(snapshot.round.result.wordmasterId, firstBot.id);
+  assert.ok(snapshot.round.result.guesses.some((guess) => guess.playerId === secondBot.id));
 });
 
 test('phase, role, privacy, immutable choices, forced change, and concurrent duplicate requests', async (t) => {

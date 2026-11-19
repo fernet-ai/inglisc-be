@@ -29,6 +29,9 @@ module.exports = function lobbyRoutes(store) {
 		res.json({ snapshot: store.snapshot(req.room, req.player) });
 	});
 	action('start', (room, player) => store.start(room, player));
+	action('add-bot', (room, player) => store.addBot(room, player));
+	action('remove-bot', store.removeBot, true);
+	action('set-bot-difficulty', store.setBotDifficulty, true);
 	action('setup', store.setup, true);
 	action('initial-choice', store.initial, true);
 	action('discard', store.discard, true);

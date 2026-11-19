@@ -66,6 +66,9 @@ Authorization: Bearer <token>
 | --- | --- | --- |
 | `POST` | `/lobby` | Crea una lobby |
 | `POST` | `/lobby/:code/join` | Entra in una lobby |
+| `POST` | `/lobby/:code/add-bot` | Il creatore aggiunge un bot a un posto libero |
+| `POST` | `/lobby/:code/remove-bot` | Il creatore rimuove un bot dalla lobby |
+| `POST` | `/lobby/:code/set-bot-difficulty` | Imposta `facile`, `medio` o `difficile` per un bot |
 | `GET` | `/lobby/:code` | Legge lo snapshot personale |
 | `POST` | `/lobby/:code/start` | Avvia la partita |
 | `POST` | `/lobby/:code/leave` | Esce dalla lobby |
@@ -133,14 +136,14 @@ waiting
   -> setup / game-result
 ```
 
-1. Il paroliere prepara un indizio italiano, cinque opzioni inglesi e indica la risposta corretta.
+1. Il paroliere prepara un indizio italiano, cinque opzioni inglesi e indica la risposta corretta. Se il ruolo tocca a un bot, il server prepara la manche dal dizionario.
 2. Gli altri due giocatori scelgono una risposta in segreto.
 3. Dopo entrambe le scelte, il paroliere scarta una delle quattro opzioni sbagliate.
 4. Gli altri due confermano la risposta finale. Possono mantenerla o cambiarla una volta; se avevano scelto l'opzione scartata devono cambiarla.
 5. Il server calcola i punti e rende visibile il risultato.
 6. L'host avanza alla manche successiva oppure apre la classifica finale.
 
-Il ruolo del paroliere ruota nell'ordine di ingresso. Per una partita da 6, 9 o 12 manche il ciclo riparte con lo stesso ordine dopo ogni terna di giocatori.
+Il ruolo del paroliere ruota nell'ordine di ingresso, includendo i bot. Per una partita da 6, 9 o 12 manche il ciclo riparte con lo stesso ordine dopo ogni terna di giocatori. I bot scelgono e confermano automaticamente; i loro punteggi seguono le stesse regole dei giocatori.
 
 ### Preparazione
 

@@ -16,6 +16,9 @@ const key = (s) => s.normalize('NFKC').toLowerCase();
 const WORD_PAIRS = require('./word-pairs.json').pairs;
 const dictionaryPairs = new Set(WORD_PAIRS.map(([prompt, translation]) => `${key(prompt)}\u0000${key(translation)}`));
 const isDictionaryPair = (prompt, translation) => dictionaryPairs.has(`${key(prompt)}\u0000${key(translation)}`);
+const botTranslations = [...new Map(WORD_PAIRS.map(([, translation]) => [key(translation), translation])).values()];
+const BOT_DIFFICULTIES = new Set(['facile', 'medio', 'difficile']);
+const botSkill = { facile: 0.4, medio: 0.67, difficile: 0.9 };
 
 function text(value, name, max) {
   if (typeof value !== 'string') fail(400, 'INVALID_INPUT', `${name} must be a string.`);
@@ -42,7 +45,7 @@ function shuffle(items) {
   return result;
 }
 
-function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
+function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now, random = Math.random } = {}) {
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error('Invalid lobby TTL');
   const rooms = new Map();
   let coffeeCount = 0;
@@ -56,7 +59,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     if (!room) fail(404, 'ROOM_NOT_FOUND', 'Room not found or expired.');
     return room;
   }
-  function makePlayer(nickname) { return { id: id(), token: token(), nickname, score: 0, lastSeen: now() }; }
+  function makePlayer(nickname) { return { id: id(), token: token(), nickname, isBot: false, score: 0, lastSeen: now() }; }
   function create(body) {
     bodyFields(body, ['nickname', 'roundCount']);
     const nickname = text(body.nickname, 'nickname', 30);
@@ -83,10 +86,37 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     changed(room);
     return player;
   }
+  function addBot(room, player) {
+    phase(room, 'waiting'); host(room, player);
+    if (room.players.length >= 3) fail(409, 'ROOM_FULL', 'Room is full.');
+    let number = 1;
+    while (room.players.some((candidate) => key(candidate.nickname) === key(`Bot ${number} 🤖`))) number++;
+    const bot = { id: id(), token: null, nickname: `Bot ${number} 🤖`, isBot: true, botDifficulty: 'medio', score: 0, lastSeen: now() };
+    room.players.push(bot);
+    changed(room);
+    return bot;
+  }
+  function setBotDifficulty(room, player, body) {
+    phase(room, 'waiting'); host(room, player);
+    bodyFields(body, ['playerId', 'difficulty']);
+    if (!BOT_DIFFICULTIES.has(body.difficulty)) fail(400, 'INVALID_INPUT', 'difficulty must be facile, medio or difficile.');
+    const bot = room.players.find((candidate) => candidate.id === body.playerId && candidate.isBot);
+    if (!bot) fail(404, 'BOT_NOT_FOUND', 'Bot not found in this lobby.');
+    bot.botDifficulty = body.difficulty;
+    changed(room);
+  }
+  function removeBot(room, player, body) {
+    phase(room, 'waiting'); host(room, player);
+    bodyFields(body, ['playerId']);
+    const index = room.players.findIndex((candidate) => candidate.id === body.playerId && candidate.isBot);
+    if (index < 0) fail(404, 'BOT_NOT_FOUND', 'Bot not found in this lobby.');
+    room.players.splice(index, 1);
+    changed(room);
+  }
   function authenticate(room, header) {
     const match = typeof header === 'string' && /^Bearer ([A-Za-z0-9_-]{43})$/.exec(header);
     const candidate = match && Buffer.from(match[1], 'utf8');
-    const player = candidate && room.players.find((p) => crypto.timingSafeEqual(Buffer.from(p.token, 'utf8'), candidate));
+    const player = candidate && room.players.find((p) => typeof p.token === 'string' && crypto.timingSafeEqual(Buffer.from(p.token, 'utf8'), candidate));
     if (!player) fail(401, 'UNAUTHORIZED', 'A valid player bearer token is required.');
     room.lastActive = now();
     player.lastSeen = room.lastActive;
@@ -96,8 +126,9 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
   function leave(room, player) {
     const wasPlaying = room.phase !== 'waiting';
     room.players = room.players.filter((p) => p.id !== player.id);
-    if (!room.players.length) { rooms.delete(room.code); return; }
-    if (room.hostId === player.id) room.hostId = room.players[0].id;
+    const humans = room.players.filter((candidate) => !candidate.isBot);
+    if (!humans.length) { rooms.delete(room.code); return; }
+    if (room.hostId === player.id) room.hostId = humans[0].id;
     if (wasPlaying) {
       room.game = null;
       room.phase = 'waiting';
@@ -119,6 +150,113 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     room.game.round = { id: id(), number, wordmasterId: room.game.order[(number - 1) % room.game.order.length], prompt: null, options: [], correctId: null, initial: new Map(), discardedId: null, final: new Map(), result: null };
     room.phase = 'setup';
   }
+  function botSetup(room) {
+    const master = room.players.find((candidate) => candidate.id === room.game.round.wordmasterId);
+    const levelPairs = WORD_PAIRS.filter(([, , difficulty]) => difficulty === master.botDifficulty);
+    const source = levelPairs.length ? levelPairs : WORD_PAIRS;
+    const pair = source[Math.min(source.length - 1, Math.floor(random() * source.length))];
+    const [prompt, translation] = pair;
+    const alternatives = botTranslations.filter((candidate) => key(candidate) !== key(translation));
+    const distractors = [];
+    while (distractors.length < 4) {
+      const index = Math.min(alternatives.length - 1, Math.floor(random() * alternatives.length));
+      distractors.push(alternatives.splice(index, 1)[0]);
+    }
+    const values = shuffle([translation, ...distractors]);
+    const options = values.map((value) => ({ id: id(), text: value }));
+    const round = room.game.round;
+    round.prompt = prompt;
+    round.correctId = options.find((option) => key(option.text) === key(translation)).id;
+    round.options = options;
+    room.phase = 'initial-choices';
+    changed(room);
+  }
+  function botInitialChoice(bot, round) {
+    const correct = round.options.find((option) => option.id === round.correctId);
+    const knowsPair = isDictionaryPair(round.prompt, correct.text);
+    const confidence = botSkill[bot.botDifficulty] * (knowsPair ? 0.9 : 0.45);
+    if (random() < confidence) return correct.id;
+    const wrong = round.options.filter((option) => option.id !== round.correctId);
+    return wrong[Math.min(wrong.length - 1, Math.floor(random() * wrong.length))].id;
+  }
+  function botDiscardChoice(room, round) {
+    const wrong = round.options.filter((option) => option.id !== round.correctId);
+    const selectedWrong = wrong.filter((option) => [...round.initial.values()].includes(option.id));
+    const targetChance = { facile: 0.2, medio: 0.65, difficile: 0.95 }[room.players.find((player) => player.id === round.wordmasterId).botDifficulty];
+    const candidates = selectedWrong.length && random() < targetChance ? selectedWrong : wrong;
+    return candidates[Math.min(candidates.length - 1, Math.floor(random() * candidates.length))].id;
+  }
+  function botFinalChoice(bot, round) {
+    const correct = round.options.find((option) => option.id === round.correctId);
+    const knowsPair = isDictionaryPair(round.prompt, correct.text);
+    const initial = round.initial.get(bot.id);
+    const available = round.options.filter((option) => option.id !== round.discardedId);
+    const initialCorrect = initial === round.correctId;
+    const skill = botSkill[bot.botDifficulty];
+    const keepInitial = initialCorrect ? 0.55 + skill * 0.4 : 0.1 + (1 - skill) * 0.3;
+    if (initial !== round.discardedId && random() < keepInitial) return initial;
+    if (random() < skill * (knowsPair ? 0.9 : 0.4)) return correct.id;
+    const alternatives = available.filter((option) => option.id !== initial && option.id !== round.correctId);
+    const candidates = alternatives.length ? alternatives : available.filter((option) => option.id !== initial);
+    return candidates[Math.min(candidates.length - 1, Math.floor(random() * candidates.length))].id;
+  }
+  function finishRound(room, round) {
+    const guesses = room.players.filter((player) => player.id !== round.wordmasterId).map((player) => {
+      const initialOptionId = round.initial.get(player.id), finalOptionId = round.final.get(player.id);
+      const correct = finalOptionId === round.correctId, changed = initialOptionId !== finalOptionId;
+      return { playerId: player.id, initialOptionId, finalOptionId, changed, correct, points: correct ? (changed ? 1 : 3) : 0 };
+    });
+    const winners = guesses.filter((guess) => guess.correct);
+    const correctTranslation = round.options.find((item) => item.id === round.correctId).text;
+    const dictionaryVerified = isDictionaryPair(round.prompt, correctTranslation);
+    const wordmasterPoints = winners.length === 0 ? (dictionaryVerified ? 3 : 2) : winners.length === 1 && winners[0].changed ? 1 : 0;
+    for (const guess of guesses) room.players.find((player) => player.id === guess.playerId).score += guess.points;
+    room.players.find((player) => player.id === round.wordmasterId).score += wordmasterPoints;
+    round.result = { number: round.number, wordmasterId: round.wordmasterId, prompt: round.prompt, options: round.options, correctOptionId: round.correctId, discardedOptionId: round.discardedId, guesses, wordmasterPoints };
+    room.game.results.push(round.result);
+    room.phase = 'round-result';
+  }
+  function driveBots(room) {
+    for (let step = 0; step < 12; step++) {
+      const round = room.game?.round;
+      if (!round) return;
+      if (room.phase === 'setup') {
+        const master = room.players.find((candidate) => candidate.id === round.wordmasterId);
+        if (!master?.isBot) return;
+        botSetup(room);
+        continue;
+      }
+      if (room.phase === 'initial-choices') {
+        const bots = room.players.filter((candidate) => candidate.isBot && candidate.id !== round.wordmasterId && !round.initial.has(candidate.id));
+        if (!bots.length) return;
+        for (const bot of bots) {
+          round.initial.set(bot.id, botInitialChoice(bot, round));
+          if (round.initial.size === 2) room.phase = 'discard';
+          changed(room);
+        }
+        continue;
+      }
+      if (room.phase === 'discard') {
+        const master = room.players.find((candidate) => candidate.id === round.wordmasterId);
+        if (!master?.isBot) return;
+        round.discardedId = botDiscardChoice(room, round);
+        room.phase = 'final-choices';
+        changed(room);
+        continue;
+      }
+      if (room.phase === 'final-choices') {
+        const bots = room.players.filter((candidate) => candidate.isBot && candidate.id !== round.wordmasterId && !round.final.has(candidate.id));
+        if (!bots.length) return;
+        for (const bot of bots) {
+          round.final.set(bot.id, botFinalChoice(bot, round));
+          if (round.final.size === 2) finishRound(room, round);
+          changed(room);
+        }
+        continue;
+      }
+      return;
+    }
+  }
   function start(room, player, rematch = false) {
     phase(room, rematch ? 'game-result' : 'waiting');
     host(room, player);
@@ -127,7 +265,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     room.game = { order: room.players.map((p) => p.id), round: null, results: [] };
     room.lastEvent = null;
     newRound(room, 1);
-    changed(room);
+    changed(room); driveBots(room);
   }
   function setup(room, player, body) {
     phase(room, 'setup'); wordmaster(room, player, true);
@@ -140,7 +278,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     const options = values.map((value) => ({ id: id(), text: value }));
     const round = room.game.round;
     round.prompt = prompt; round.correctId = options[body.correctIndex].id; round.options = shuffle(options);
-    room.phase = 'initial-choices'; changed(room);
+    room.phase = 'initial-choices'; changed(room); driveBots(room);
   }
   function option(round, body) {
     bodyFields(body, ['optionId']);
@@ -153,14 +291,14 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     if (round.initial.has(player.id)) fail(409, 'ALREADY_SUBMITTED', 'Initial choice is already submitted.');
     round.initial.set(player.id, option(round, body));
     if (round.initial.size === 2) room.phase = 'discard';
-    changed(room);
+    changed(room); driveBots(room);
   }
   function discard(room, player, body) {
     phase(room, 'discard'); wordmaster(room, player, true);
     const round = room.game.round;
     const selected = option(round, body);
     if (selected === round.correctId) fail(400, 'INVALID_DISCARD', 'The correct option cannot be discarded.');
-    round.discardedId = selected; room.phase = 'final-choices'; changed(room);
+    round.discardedId = selected; room.phase = 'final-choices'; changed(room); driveBots(room);
   }
   function confirm(room, player, body) {
     phase(room, 'final-choices'); wordmaster(room, player, false);
@@ -169,29 +307,14 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     const selected = option(round, body);
     if (selected === round.discardedId) fail(400, 'INVALID_OPTION', 'The discarded option cannot be selected.');
     round.final.set(player.id, selected);
-    if (round.final.size === 2) {
-      const guesses = room.players.filter((p) => p.id !== round.wordmasterId).map((p) => {
-        const initialOptionId = round.initial.get(p.id), finalOptionId = round.final.get(p.id);
-        const correct = finalOptionId === round.correctId, changed = initialOptionId !== finalOptionId;
-        return { playerId: p.id, initialOptionId, finalOptionId, changed, correct, points: correct ? (changed ? 1 : 3) : 0 };
-      });
-      const winners = guesses.filter((g) => g.correct);
-      const correctTranslation = round.options.find((item) => item.id === round.correctId).text;
-      const dictionaryVerified = isDictionaryPair(round.prompt, correctTranslation);
-      const wordmasterPoints = winners.length === 0 ? (dictionaryVerified ? 3 : 2) : winners.length === 1 && winners[0].changed ? 1 : 0;
-      for (const guess of guesses) room.players.find((p) => p.id === guess.playerId).score += guess.points;
-      room.players.find((p) => p.id === round.wordmasterId).score += wordmasterPoints;
-      round.result = { number: round.number, wordmasterId: round.wordmasterId, prompt: round.prompt, options: round.options, correctOptionId: round.correctId, discardedOptionId: round.discardedId, guesses, wordmasterPoints };
-      room.game.results.push(round.result);
-      room.phase = 'round-result';
-    }
-    changed(room);
+    if (round.final.size === 2) finishRound(room, round);
+    changed(room); driveBots(room);
   }
   function advance(room, player) {
     phase(room, 'round-result'); host(room, player);
     if (room.game.round.number === room.roundCount) room.phase = 'game-result';
     else newRound(room, room.game.round.number + 1);
-    changed(room);
+    changed(room); driveBots(room);
   }
   function snapshot(room, player) {
     const game = room.game;
@@ -215,7 +338,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
       }
     }
     return { code: room.code, rev: room.rev, phase: room.phase, hostId: room.hostId, roundCount: room.roundCount, totalRounds: room.roundCount, me: player.id,
-      players: room.players.map(({ id, nickname, score }) => ({ id, nickname, score })),
+      players: room.players.map(({ id, nickname, score, isBot, botDifficulty }) => ({ id, nickname, score, isBot, ...(isBot ? { botDifficulty } : {}) })),
       lastEvent: room.lastEvent, round, results: game ? game.results : [], ranking };
   }
   function activeCount() {
@@ -223,7 +346,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     sweep();
     let count = 0;
     for (const room of rooms.values()) {
-      count += room.players.filter(player => time - player.lastSeen <= 2 * 60 * 1000).length;
+      count += room.players.filter(player => !player.isBot && time - player.lastSeen <= 2 * 60 * 1000).length;
     }
     return count;
   }
@@ -236,7 +359,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
         code: room.code,
         creatorNickname: room.creatorNickname,
         roundCount: room.roundCount,
-        participantNames: room.players.map(player => player.nickname),
+        participantNames: room.players.map(player => player.isBot ? `${player.nickname} (bot)` : player.nickname),
         participantCount: room.players.length,
         maxParticipants: 3,
         phase: room.phase,
@@ -248,7 +371,7 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now } = {}) {
     coffeeCount += 1;
     return coffeeCount;
   }
-  return { create, join, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep, activeCount, openLobbies, coffeeCount: () => coffeeCount, offerCoffee };
+  return { create, join, addBot, removeBot, setBotDifficulty, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep, activeCount, openLobbies, coffeeCount: () => coffeeCount, offerCoffee };
 }
 
 module.exports = { createStore, ApiError, bodyFields };
