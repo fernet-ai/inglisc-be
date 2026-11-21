@@ -45,10 +45,10 @@ function shuffle(items) {
   return result;
 }
 
-function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now, random = Math.random } = {}) {
+function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now, random = Math.random, state } = {}) {
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error('Invalid lobby TTL');
-  const rooms = new Map();
-  let coffeeCount = 0;
+  const rooms = new Map(state?.rooms || []);
+  let coffeeCount = state?.coffeeCount || 0;
   function sweep() {
     const time = now();
     for (const [code, room] of rooms) if (time - room.lastActive >= ttlMs) rooms.delete(code);
@@ -371,7 +371,8 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now, random = Mat
     coffeeCount += 1;
     return coffeeCount;
   }
-  return { create, join, addBot, removeBot, setBotDifficulty, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep, activeCount, openLobbies, coffeeCount: () => coffeeCount, offerCoffee };
+  return { create, join, addBot, removeBot, setBotDifficulty, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep, activeCount, openLobbies, coffeeCount: () => coffeeCount, offerCoffee,
+    exportState: () => ({ rooms: [...rooms], coffeeCount }) };
 }
 
 module.exports = { createStore, ApiError, bodyFields };

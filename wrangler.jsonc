@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "inglisc-be",
+  "main": "cloudflare-worker.mjs",
+  "compatibility_date": "2026-11-21",
+  "vars": {
+    "ENVIRONMENT": "production"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GAME_COORDINATOR",
+        "class_name": "GameCoordinator"
+      }
+    ]
+  },
+  "exports": {
+    "GameCoordinator": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}

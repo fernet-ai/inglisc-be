@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApp } = require('../server');
+const { createStore } = require('../game');
 const dictionary = require('../word-pairs.json');
 
 async function fixture(t, options) {
@@ -37,6 +38,24 @@ async function setupRound(call, master, body = setupBody) {
 }
 const choice = (optionId) => ({ optionId });
 const error = (response, status, code) => { assert.equal(response.status, status); assert.equal(response.json.error.code, code); };
+
+test('store state can be restored with in-progress game Maps intact', () => {
+  const store = createStore();
+  const { room, player } = store.create({ nickname: 'Ada' });
+  store.addBot(room, player);
+  store.addBot(room, player);
+  store.start(room, player);
+  store.setup(room, player, setupBody);
+  store.offerCoffee();
+
+  const restored = createStore({ state: store.exportState() });
+  const restoredRoom = restored.get(room.code);
+  const restoredPlayer = restored.authenticate(restoredRoom, `Bearer ${player.token}`);
+
+  assert.equal(restored.snapshot(restoredRoom, restoredPlayer).phase, 'discard');
+  assert.equal(restored.snapshot(restoredRoom, restoredPlayer).round.initialChoices.length, 2);
+  assert.equal(restored.coffeeCount(), 1);
+});
 
 test('active user endpoint reports players with recent activity', async (t) => {
   const req = await fixture(t);

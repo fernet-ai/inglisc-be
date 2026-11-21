@@ -27,6 +27,27 @@ Health endpoint:
 GET /health
 ```
 
+## Cloudflare Workers setup
+
+The Worker entry point is `cloudflare-worker.mjs`. It forwards the existing Express API to one SQLite-backed Durable Object, which keeps lobby state consistent across requests and restores it after an isolate restarts.
+
+Install dependencies and run locally:
+
+```bash
+npm install
+npm run dev:worker
+```
+
+Deploy with Wrangler:
+
+```bash
+npm run deploy:worker
+```
+
+For a Cloudflare Git integration using this backend repository, leave the build command empty and use `npm run deploy:worker` as the deploy command. Set `ALLOWED_ORIGINS` in the Worker's Variables to a comma-separated list of exact frontend origins, for example `https://your-vercel-domain.vercel.app`. It is a plain-text variable, not a secret. Do not include a trailing slash. Native app requests without an `Origin` header remain allowed.
+
+The Worker uses a single coordinator Durable Object because the API includes global lobby listings, active-player counts, and a shared coffee counter. This is appropriate for the current small game; higher traffic may require partitioning state by lobby and redesigning the global endpoints.
+
 ## CORS
 
 Without `ALLOWED_ORIGINS`, CORS remains open for local development and native apps.

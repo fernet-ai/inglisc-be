@@ -1,14 +1,13 @@
 const express = require('express');
-require('dotenv').config({ quiet: true });
-const corsMiddleware = require('./middlewares/corsMiddleware');
+const createCorsMiddleware = require('./middlewares/corsMiddleware');
 const lobbyRoutes = require('./routes/lobbyRoutes');
 const { createStore, ApiError } = require('./game');
 
 function createApp(options = {}) {
   const app = express();
-  const store = createStore(options);
+  const store = options.store || createStore(options);
   app.disable('x-powered-by');
-  app.use(corsMiddleware);
+  app.use(createCorsMiddleware(options.allowedOrigins));
   app.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   app.use('/lobby', (req, res, next) => {
     if ((Number(req.get('content-length')) > 0 || req.get('transfer-encoding')) && !req.is('application/json')) {
@@ -20,7 +19,7 @@ function createApp(options = {}) {
   app.use('/lobby', lobbyRoutes(store));
   app.get('/', (req, res) => res.send('Sei su InGlisc GaMe!'));
   app.get('/mella', (req, res) => res.send('Caramella ti adoro ❤️ 🍬'));
-  app.get('/health', (req, res) => res.json({ status: 'ok', uptimeSeconds: Math.floor(process.uptime()), environment: process.env.ENVIRONMENT || 'development' }));
+  app.get('/health', (req, res) => res.json({ status: 'ok', uptimeSeconds: Math.floor(process.uptime()), environment: options.environment || process.env.ENVIRONMENT || 'development' }));
   app.get('/active', (req, res) => res.json({ activeUsers: store.activeCount() }));
   app.get('/lobbies', (req, res) => res.json({ lobbies: store.openLobbies() }));
   app.get('/coffee', (req, res) => res.json({ coffeeCount: store.coffeeCount() }));
@@ -38,6 +37,7 @@ function createApp(options = {}) {
 }
 
 if (require.main === module) {
+  require('dotenv').config({ quiet: true });
   const app = createApp();
   const PORT = process.env.PORT || 3000;
   const ENVIRONMENT = process.env.ENVIRONMENT || 'development';
