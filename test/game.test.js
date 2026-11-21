@@ -98,15 +98,19 @@ test('health endpoint responds without credentials', async (t) => {
   assert.equal(typeof response.json.uptimeSeconds, 'number');
 });
 
-test('CORS allows production and this Vercel project previews only', async (t) => {
+test('CORS allows production domains and this Vercel project previews only', async (t) => {
   const req = await fixture(t, {
-    allowedOrigins: 'https://inglisc.vercel.app,https://inglisc-*-fernet-ais-projects.vercel.app',
+    allowedOrigins: 'https://inglisc.vercel.app,https://inglisc.it,https://www.inglisc.it,https://inglisc-*-fernet-ais-projects.vercel.app',
   });
   const production = await req('/health', { method: 'GET', headers: { Origin: 'https://inglisc.vercel.app' } });
+  const apexDomain = await req('/health', { method: 'GET', headers: { Origin: 'https://inglisc.it' } });
+  const wwwDomain = await req('/health', { method: 'GET', headers: { Origin: 'https://www.inglisc.it' } });
   const preview = await req('/health', { method: 'GET', headers: { Origin: 'https://inglisc-58csqvw2e-fernet-ais-projects.vercel.app' } });
   const otherProject = await req('/health', { method: 'GET', headers: { Origin: 'https://other-58csqvw2e-fernet-ais-projects.vercel.app' } });
 
   assert.equal(production.headers.get('access-control-allow-origin'), 'https://inglisc.vercel.app');
+  assert.equal(apexDomain.headers.get('access-control-allow-origin'), 'https://inglisc.it');
+  assert.equal(wwwDomain.headers.get('access-control-allow-origin'), 'https://www.inglisc.it');
   assert.equal(preview.headers.get('access-control-allow-origin'), 'https://inglisc-58csqvw2e-fernet-ais-projects.vercel.app');
   assert.equal(otherProject.headers.get('access-control-allow-origin'), null);
 });

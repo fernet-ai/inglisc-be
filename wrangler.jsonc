@@ -5,7 +5,7 @@
   "compatibility_date": "2026-11-21",
   "vars": {
     "ENVIRONMENT": "production",
-    "ALLOWED_ORIGINS": "https://inglisc.vercel.app,https://inglisc-*-fernet-ais-projects.vercel.app"
+    "ALLOWED_ORIGINS": "https://inglisc.vercel.app,https://inglisc.it,https://www.inglisc.it,https://inglisc-*-fernet-ais-projects.vercel.app"
   },
   "durable_objects": {
     "bindings": [
