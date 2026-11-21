@@ -4,7 +4,8 @@
   "main": "cloudflare-worker.mjs",
   "compatibility_date": "2026-11-21",
   "vars": {
-    "ENVIRONMENT": "production"
+    "ENVIRONMENT": "production",
+    "ALLOWED_ORIGINS": "https://inglisc.vercel.app"
   },
   "durable_objects": {
     "bindings": [
