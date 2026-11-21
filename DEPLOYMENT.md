@@ -44,7 +44,7 @@ Deploy with Wrangler:
 npm run deploy:worker
 ```
 
-For a Cloudflare Git integration using this backend repository, leave the build command empty and use `npm run deploy:worker` as the deploy command. Set `ALLOWED_ORIGINS` in the Worker's Variables to a comma-separated list of exact frontend origins, for example `https://your-vercel-domain.vercel.app`. It is a plain-text variable, not a secret. Do not include a trailing slash. Native app requests without an `Origin` header remain allowed.
+For a Cloudflare Git integration using this backend repository, leave the build command empty and use `npm run deploy:worker` as the deploy command. Set `ALLOWED_ORIGINS` in the Worker's Variables to a comma-separated allowlist. Exact origins are supported, along with `*` matching one hostname label for Vercel previews; keep the pattern scoped to your project, for example `https://inglisc-*-fernet-ais-projects.vercel.app`. It is a plain-text variable, not a secret. Do not include a trailing slash. Native app requests without an `Origin` header remain allowed.
 
 The Worker uses a single coordinator Durable Object because the API includes global lobby listings, active-player counts, and a shared coffee counter. This is appropriate for the current small game; higher traffic may require partitioning state by lobby and redesigning the global endpoints.
 

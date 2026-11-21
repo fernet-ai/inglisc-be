@@ -98,6 +98,19 @@ test('health endpoint responds without credentials', async (t) => {
   assert.equal(typeof response.json.uptimeSeconds, 'number');
 });
 
+test('CORS allows production and this Vercel project previews only', async (t) => {
+  const req = await fixture(t, {
+    allowedOrigins: 'https://inglisc.vercel.app,https://inglisc-*-fernet-ais-projects.vercel.app',
+  });
+  const production = await req('/health', { method: 'GET', headers: { Origin: 'https://inglisc.vercel.app' } });
+  const preview = await req('/health', { method: 'GET', headers: { Origin: 'https://inglisc-58csqvw2e-fernet-ais-projects.vercel.app' } });
+  const otherProject = await req('/health', { method: 'GET', headers: { Origin: 'https://other-58csqvw2e-fernet-ais-projects.vercel.app' } });
+
+  assert.equal(production.headers.get('access-control-allow-origin'), 'https://inglisc.vercel.app');
+  assert.equal(preview.headers.get('access-control-allow-origin'), 'https://inglisc-58csqvw2e-fernet-ais-projects.vercel.app');
+  assert.equal(otherProject.headers.get('access-control-allow-origin'), null);
+});
+
 test('coffee offer counter is shared by clients on the server', async (t) => {
   const req = await fixture(t);
   assert.deepEqual((await req('/coffee', { method: 'GET' })).json, { coffeeCount: 0 });
