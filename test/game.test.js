@@ -57,6 +57,57 @@ test('store state can be restored with in-progress game Maps intact', () => {
   assert.equal(restored.coffeeCount(), 1);
 });
 
+test('message storage is independent of exported game state', () => {
+  const records = [];
+  const messageStore = {
+    count: () => records.length,
+    add: record => records.push(record),
+    list: () => [...records],
+    delete: messageId => {
+      const index = records.findIndex(record => record.id === messageId);
+      if (index === -1) return false;
+      records.splice(index, 1);
+      return true;
+    },
+  };
+  const store = createStore({ messageStore });
+  store.addMessage({ message: '  Ciao!\nUna proposta  ' });
+  const state = store.exportState();
+  assert.equal(Object.hasOwn(state, 'messages'), false);
+  const restored = createStore({ state, messageStore });
+  assert.equal(restored.messages()[0].message, 'Ciao!\nUna proposta');
+  assert.equal(restored.deleteMessage(records[0].id), true);
+  assert.deepEqual(restored.messages(), []);
+});
+
+test('messages are validated and the inbox does not silently discard entries', () => {
+  const store = createStore({ now: () => 0 });
+  for (const message of ['', ' '.repeat(5), 'x'.repeat(1001), 'test\u0000']) {
+    assert.throws(() => store.addMessage({ message }), { code: 'INVALID_INPUT' });
+  }
+  assert.throws(() => store.addMessage({ message: 'hello', extra: true }), { code: 'INVALID_INPUT' });
+  for (let index = 0; index < 200; index++) store.addMessage({ message: `Messaggio ${index}` });
+  assert.throws(() => store.addMessage({ message: 'Troppo' }), { code: 'MESSAGES_FULL' });
+  assert.equal(store.messages().length, 200);
+  assert.equal(store.messages()[0].createdAt, '1970-01-01T00:00:00.000Z');
+  assert.equal(store.deleteMessage(store.messages()[0].id), true);
+  assert.equal(store.messages().length, 199);
+});
+
+test('message inbox accepts submissions and requires an admin token to read or delete', async (t) => {
+  const req = await fixture(t, { messageAdminToken: 'test-secret' });
+  error(await req('/messages', { body: { message: '  ' } }), 400, 'INVALID_INPUT');
+  assert.equal((await req('/messages', { body: { message: 'Ciao!\nUna proposta' } })).status, 201);
+  error(await req('/messages', { method: 'GET' }), 403, 'FORBIDDEN');
+  error(await req('/messages', { method: 'GET', token: 'wrong' }), 403, 'FORBIDDEN');
+  const inbox = await req('/messages', { method: 'GET', token: 'test-secret' });
+  assert.equal(inbox.json.messages[0].message, 'Ciao!\nUna proposta');
+  const messageId = inbox.json.messages[0].id;
+  error(await req(`/messages/${messageId}`, { method: 'DELETE' }), 403, 'FORBIDDEN');
+  assert.equal((await req(`/messages/${messageId}`, { method: 'DELETE', token: 'test-secret' })).status, 200);
+  assert.deepEqual((await req('/messages', { method: 'GET', token: 'test-secret' })).json.messages, []);
+});
+
 test('active user endpoint reports players with recent activity', async (t) => {
   const req = await fixture(t);
   const host = await req('/lobby', { body: { nickname: 'Ada', roundCount: 3 } });

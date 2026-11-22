@@ -2,6 +2,7 @@ const express = require('express');
 const createCorsMiddleware = require('./middlewares/corsMiddleware');
 const lobbyRoutes = require('./routes/lobbyRoutes');
 const { createStore, ApiError } = require('./game');
+const crypto = require('node:crypto');
 
 function createApp(options = {}) {
   const app = express();
@@ -24,6 +25,20 @@ function createApp(options = {}) {
   app.get('/lobbies', (req, res) => res.json({ lobbies: store.openLobbies() }));
   app.get('/coffee', (req, res) => res.json({ coffeeCount: store.coffeeCount() }));
   app.post('/coffee', (req, res) => res.json({ coffeeCount: store.offerCoffee() }));
+  app.post('/messages', (req, res) => { store.addMessage(req.body); res.status(201).json({ ok: true }); });
+  const requireMessageAdmin = (req, res, next) => {
+    const secret = options.messageAdminToken || process.env.MESSAGE_ADMIN_TOKEN;
+    const provided = req.get('authorization')?.replace(/^Bearer /i, '');
+    if (!secret || !provided || !crypto.timingSafeEqual(crypto.createHash('sha256').update(secret).digest(), crypto.createHash('sha256').update(provided).digest())) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    }
+    next();
+  };
+  app.get('/messages', requireMessageAdmin, (req, res) => res.json({ messages: store.messages() }));
+  app.delete('/messages/:id', requireMessageAdmin, (req, res) => {
+    if (!store.deleteMessage(req.params.id)) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Message not found.' } });
+    res.json({ ok: true });
+  });
   app.use((req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found.' } }));
   app.use((err, req, res, next) => {
     if (err instanceof ApiError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });

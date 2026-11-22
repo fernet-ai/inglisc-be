@@ -48,6 +48,40 @@ For a Cloudflare Git integration using this backend repository, leave the build 
 
 The Worker uses a single coordinator Durable Object because the API includes global lobby listings, active-player counts, and a shared coffee counter. This is appropriate for the current small game; higher traffic may require partitioning state by lobby and redesigning the global endpoints.
 
+## Messaggi Scrivimi
+
+Messages are stored in the `messages` SQL table of the SQLite-backed coordinator Durable Object. The standalone Node/Render server keeps them in memory only, so they are lost on restart. Each message contains an ID, text and creation date. Submissions are anonymous and limited to 1,000 characters; the inbox holds up to 200 messages and rejects new submissions when full, without deleting existing messages. Messages previously stored in `game-state` are not migrated to the SQL table.
+
+To read the messages in the Cloudflare dashboard after deploying the Worker:
+
+1. Open **Durable Objects** and select the `GameCoordinator` namespace for `inglisc-be`.
+2. Select **Data Studio** and enter `global` as the Durable Object's unique name.
+3. Open the `messages` table or run `SELECT id, message, createdAt FROM messages ORDER BY createdAt DESC;` in the query tab.
+
+The table is created when the Durable Object first starts after deployment. Data Studio requires at least Editor access to the Worker. Treat the table as production data: deleting a row frees a place in the inbox and permanently removes that message.
+
+Configure a strong secret to read and delete messages. For the Worker, create it with:
+
+```bash
+npx wrangler secret put MESSAGE_ADMIN_TOKEN
+```
+
+For standalone Node, set `MESSAGE_ADMIN_TOKEN` in the server environment. Without this secret, reading and deleting messages are disabled. Keep it out of the frontend and source control.
+
+From a private terminal, set `MESSAGE_ADMIN_TOKEN` and replace the example URL with your backend URL:
+
+```bash
+curl -H "Authorization: Bearer $MESSAGE_ADMIN_TOKEN" https://your-backend.example/messages
+```
+
+After saving any message you want to keep, remove it by its ID to free space:
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $MESSAGE_ADMIN_TOKEN" https://your-backend.example/messages/MESSAGE_ID
+```
+
+Protect the secret and downloaded messages; message submissions can contain personal information. The endpoint does not send notifications and is not rate-limited.
+
 ## CORS
 
 Without `ALLOWED_ORIGINS`, CORS remains open for local development and native apps.

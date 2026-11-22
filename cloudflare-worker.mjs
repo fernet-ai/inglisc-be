@@ -10,10 +10,20 @@ export class GameCoordinator extends DurableObject {
     super(ctx, env);
     this.ready = this.ctx.blockConcurrencyWhile(async () => {
       const state = await this.ctx.storage.get('game-state');
+      const sql = this.ctx.storage.sql;
+      sql.exec('CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, message TEXT NOT NULL, createdAt TEXT NOT NULL)');
+      const messageStore = {
+        count: () => sql.exec('SELECT COUNT(*) AS count FROM messages').one().count,
+        add: ({ id, message, createdAt }) => sql.exec('INSERT INTO messages (id, message, createdAt) VALUES (?, ?, ?)', id, message, createdAt),
+        list: () => sql.exec('SELECT id, message, createdAt FROM messages ORDER BY rowid').toArray(),
+        delete: messageId => sql.exec('DELETE FROM messages WHERE id = ? RETURNING id', messageId).toArray().length > 0,
+      };
       this.app = createApp({
         state,
+        messageStore,
         allowedOrigins: env.ALLOWED_ORIGINS || '',
         environment: env.ENVIRONMENT || 'production',
+        messageAdminToken: env.MESSAGE_ADMIN_TOKEN,
       });
       this.server = createServer(this.app);
       await new Promise((resolve, reject) => {

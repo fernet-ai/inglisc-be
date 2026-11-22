@@ -45,10 +45,21 @@ function shuffle(items) {
   return result;
 }
 
-function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now, random = Math.random, state } = {}) {
+function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now, random = Math.random, state, messageStore } = {}) {
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error('Invalid lobby TTL');
   const rooms = new Map(state?.rooms || []);
   let coffeeCount = state?.coffeeCount || 0;
+  const messages = [];
+  const inbox = messageStore || {
+    count: () => messages.length,
+    add: message => messages.push(message),
+    list: () => [...messages],
+    delete: messageId => {
+      const index = messages.findIndex(message => message.id === messageId);
+      if (index !== -1) messages.splice(index, 1);
+      return index !== -1;
+    },
+  };
   function sweep() {
     const time = now();
     for (const [code, room] of rooms) if (time - room.lastActive >= ttlMs) rooms.delete(code);
@@ -371,7 +382,18 @@ function createStore({ ttlMs = 24 * 60 * 60 * 1000, now = Date.now, random = Mat
     coffeeCount += 1;
     return coffeeCount;
   }
+  function addMessage(body) {
+    bodyFields(body, ['message']);
+    if (typeof body.message !== 'string') fail(400, 'INVALID_INPUT', 'Message must be a string.');
+    const message = body.message.normalize('NFKC').trim();
+    if (!message || message.length > 1000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(message)) {
+      fail(400, 'INVALID_INPUT', 'Message must contain 1–1000 characters.');
+    }
+    if (inbox.count() >= 200) fail(503, 'MESSAGES_FULL', 'Message inbox is full.');
+    inbox.add({ id: id(), message, createdAt: new Date(now()).toISOString() });
+  }
   return { create, join, addBot, removeBot, setBotDifficulty, get, authenticate, leave, start, setup, initial, discard, confirm, advance, snapshot, sweep, activeCount, openLobbies, coffeeCount: () => coffeeCount, offerCoffee,
+    addMessage, messages: () => inbox.list(), deleteMessage: messageId => inbox.delete(messageId),
     exportState: () => ({ rooms: [...rooms], coffeeCount }) };
 }
 
